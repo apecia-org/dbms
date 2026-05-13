@@ -1,0 +1,15 @@
+{
+  "name": "dbml-ui-editor",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm --workspace client run dev",
+    "build": "npm --workspace client run build",
+    "test": "npm --workspace client run test",
+    "server:dev": "cargo run --manifest-path server/Cargo.toml",
+    "server:check": "cargo check --manifest-path server/Cargo.toml"
+  }
+}
