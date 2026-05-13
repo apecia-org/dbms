@@ -129,8 +129,8 @@ Map your realm roles to `readonly` or `editor`. Mutating routes require `editor`
 
 ## Roadmap
 
-- [ ] Realtime collaboration
 - [ ] Import from existing databases
+- [ ] Docs for databases
 - [ ] Diff & migration generator
 - [ ] Theme presets (light / dark / high‑contrast)
 - [ ] One‑click Docker / Fly.io deploy
