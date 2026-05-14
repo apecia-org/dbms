@@ -22,7 +22,7 @@ export async function listDocuments(token?: string): Promise<SavedDocument[]> {
 }
 
 export async function saveDocument(
-  input: { id?: string; name: string; dbml: string; layoutJson: unknown; parsedSchema?: unknown | null; note?: string | null },
+  input: { id?: string; name: string; dbml: string; layoutJson: unknown; parsedSchema?: unknown | null; wikiMetadata?: unknown | null; note?: string | null },
   token?: string,
 ): Promise<SavedDocument> {
   const response = await fetch(input.id ? `${API_BASE}/documents/${input.id}` : `${API_BASE}/documents`, {

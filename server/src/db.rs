@@ -26,6 +26,7 @@ pub struct Document {
     pub dbml: String,
     pub layout_json: serde_json::Value,
     pub parsed_schema: Option<serde_json::Value>,
+    pub wiki_metadata: serde_json::Value,
     pub owner_subject: String,
     pub version: i64,
     pub created_at: DateTime<Utc>,
@@ -43,6 +44,7 @@ pub struct DocumentVersion {
     pub dbml: String,
     pub layout_json: serde_json::Value,
     pub parsed_schema: Option<serde_json::Value>,
+    pub wiki_metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
 
@@ -66,6 +68,8 @@ pub struct UpsertDocument {
     pub layout_json: serde_json::Value,
     #[serde(default)]
     pub parsed_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    pub wiki_metadata: serde_json::Value,
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -114,6 +118,7 @@ impl Store {
                       dbml TEXT NOT NULL,
                       layout_json TEXT NOT NULL,
                       parsed_schema TEXT,
+                      wiki_metadata TEXT NOT NULL DEFAULT '{}',
                       owner_subject TEXT NOT NULL,
                       version INTEGER NOT NULL,
                       created_at TEXT NOT NULL,
@@ -126,6 +131,11 @@ impl Store {
                 let _ = sqlx::query("ALTER TABLE documents ADD COLUMN parsed_schema TEXT")
                     .execute(pool)
                     .await;
+                let _ = sqlx::query(
+                    "ALTER TABLE documents ADD COLUMN wiki_metadata TEXT NOT NULL DEFAULT '{}'",
+                )
+                .execute(pool)
+                .await;
                 sqlx::query(
                     r#"
                     CREATE TABLE IF NOT EXISTS document_versions (
@@ -137,6 +147,7 @@ impl Store {
                       dbml TEXT NOT NULL,
                       layout_json TEXT NOT NULL,
                       parsed_schema TEXT,
+                      wiki_metadata TEXT NOT NULL DEFAULT '{}',
                       created_at TEXT NOT NULL,
                       UNIQUE(document_id, version_number)
                     )
@@ -144,6 +155,11 @@ impl Store {
                 )
                 .execute(pool)
                 .await?;
+                let _ = sqlx::query(
+                    "ALTER TABLE document_versions ADD COLUMN wiki_metadata TEXT NOT NULL DEFAULT '{}'",
+                )
+                .execute(pool)
+                .await;
                 sqlx::query("CREATE INDEX IF NOT EXISTS idx_document_versions_document ON document_versions(document_id, version_number DESC)")
                     .execute(pool)
                     .await?;
@@ -157,6 +173,7 @@ impl Store {
                       dbml TEXT NOT NULL,
                       layout_json JSONB NOT NULL,
                       parsed_schema JSONB,
+                      wiki_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                       owner_subject TEXT NOT NULL,
                       version BIGINT NOT NULL,
                       created_at TIMESTAMPTZ NOT NULL,
@@ -167,6 +184,9 @@ impl Store {
                 .execute(pool)
                 .await?;
                 sqlx::query("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parsed_schema JSONB")
+                    .execute(pool)
+                    .await?;
+                sqlx::query("ALTER TABLE documents ADD COLUMN IF NOT EXISTS wiki_metadata JSONB NOT NULL DEFAULT '{}'::jsonb")
                     .execute(pool)
                     .await?;
                 sqlx::query(
@@ -180,6 +200,7 @@ impl Store {
                       dbml TEXT NOT NULL,
                       layout_json JSONB NOT NULL,
                       parsed_schema JSONB,
+                      wiki_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                       created_at TIMESTAMPTZ NOT NULL,
                       UNIQUE(document_id, version_number)
                     )
@@ -187,6 +208,9 @@ impl Store {
                 )
                 .execute(pool)
                 .await?;
+                sqlx::query("ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS wiki_metadata JSONB NOT NULL DEFAULT '{}'::jsonb")
+                    .execute(pool)
+                    .await?;
                 sqlx::query("CREATE INDEX IF NOT EXISTS idx_document_versions_document ON document_versions(document_id, version_number DESC)")
                     .execute(pool)
                     .await?;
@@ -200,6 +224,7 @@ impl Store {
                       dbml LONGTEXT NOT NULL,
                       layout_json JSON NOT NULL,
                       parsed_schema JSON,
+                      wiki_metadata JSON NOT NULL,
                       owner_subject TEXT NOT NULL,
                       version BIGINT NOT NULL,
                       created_at TIMESTAMP(6) NOT NULL,
@@ -210,6 +235,9 @@ impl Store {
                 .execute(pool)
                 .await?;
                 let _ = sqlx::query("ALTER TABLE documents ADD COLUMN parsed_schema JSON")
+                    .execute(pool)
+                    .await;
+                let _ = sqlx::query("ALTER TABLE documents ADD COLUMN wiki_metadata JSON")
                     .execute(pool)
                     .await;
                 sqlx::query(
@@ -223,6 +251,7 @@ impl Store {
                       dbml LONGTEXT NOT NULL,
                       layout_json JSON NOT NULL,
                       parsed_schema JSON,
+                      wiki_metadata JSON NOT NULL,
                       created_at TIMESTAMP(6) NOT NULL,
                       UNIQUE KEY uq_document_versions_document_version (document_id, version_number),
                       INDEX idx_document_versions_document (document_id, version_number DESC),
@@ -232,6 +261,9 @@ impl Store {
                 )
                 .execute(pool)
                 .await?;
+                let _ = sqlx::query("ALTER TABLE document_versions ADD COLUMN wiki_metadata JSON")
+                    .execute(pool)
+                    .await;
             }
         }
         Ok(())
@@ -240,13 +272,13 @@ impl Store {
     pub async fn list_documents(&self) -> Result<Vec<Document>, AppError> {
         match self {
             Store::Sqlite(pool) => {
-                let rows = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at FROM documents ORDER BY updated_at DESC")
+                let rows = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at FROM documents ORDER BY updated_at DESC")
                     .fetch_all(pool)
                     .await?;
                 rows.into_iter().map(document_from_sqlite).collect()
             }
             Store::Postgres(pool) => {
-                let rows = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at FROM documents ORDER BY updated_at DESC")
+                let rows = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at FROM documents ORDER BY updated_at DESC")
                     .fetch_all(pool)
                     .await?;
                 Ok(rows
@@ -257,6 +289,7 @@ impl Store {
                         dbml: row.get("dbml"),
                         layout_json: row.get("layout_json"),
                         parsed_schema: row.get("parsed_schema"),
+                        wiki_metadata: row.get("wiki_metadata"),
                         owner_subject: row.get("owner_subject"),
                         version: row.get("version"),
                         created_at: row.get("created_at"),
@@ -265,7 +298,7 @@ impl Store {
                     .collect())
             }
             Store::MySql(pool) => {
-                let rows = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at FROM documents ORDER BY updated_at DESC")
+                let rows = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at FROM documents ORDER BY updated_at DESC")
                     .fetch_all(pool)
                     .await?;
                 rows.into_iter().map(document_from_mysql).collect()
@@ -285,6 +318,7 @@ impl Store {
             dbml: input.dbml,
             layout_json: input.layout_json,
             parsed_schema: input.parsed_schema,
+            wiki_metadata: input.wiki_metadata,
             owner_subject: owner_subject.to_string(),
             version: 1,
             created_at: now,
@@ -295,19 +329,20 @@ impl Store {
 
         match self {
             Store::Sqlite(pool) => {
-                sqlx::query("INSERT INTO documents (id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO documents (id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(document.id.to_string())
                     .bind(&document.name)
                     .bind(&document.dbml)
                     .bind(document.layout_json.to_string())
                     .bind(document.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(document.wiki_metadata.to_string())
                     .bind(&document.owner_subject)
                     .bind(document.version)
                     .bind(document.created_at.to_rfc3339())
                     .bind(document.updated_at.to_rfc3339())
                     .execute(pool)
                     .await?;
-                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(version_id.to_string())
                     .bind(document.id.to_string())
                     .bind(document.version)
@@ -316,24 +351,26 @@ impl Store {
                     .bind(&document.dbml)
                     .bind(document.layout_json.to_string())
                     .bind(document.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(document.wiki_metadata.to_string())
                     .bind(document.created_at.to_rfc3339())
                     .execute(pool)
                     .await?;
             }
             Store::Postgres(pool) => {
-                sqlx::query("INSERT INTO documents (id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
+                sqlx::query("INSERT INTO documents (id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
                     .bind(document.id)
                     .bind(&document.name)
                     .bind(&document.dbml)
                     .bind(&document.layout_json)
                     .bind(&document.parsed_schema)
+                    .bind(&document.wiki_metadata)
                     .bind(&document.owner_subject)
                     .bind(document.version)
                     .bind(document.created_at)
                     .bind(document.updated_at)
                     .execute(pool)
                     .await?;
-                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
+                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
                     .bind(version_id)
                     .bind(document.id)
                     .bind(document.version)
@@ -342,24 +379,26 @@ impl Store {
                     .bind(&document.dbml)
                     .bind(&document.layout_json)
                     .bind(&document.parsed_schema)
+                    .bind(&document.wiki_metadata)
                     .bind(document.created_at)
                     .execute(pool)
                     .await?;
             }
             Store::MySql(pool) => {
-                sqlx::query("INSERT INTO documents (id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO documents (id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(document.id.to_string())
                     .bind(&document.name)
                     .bind(&document.dbml)
                     .bind(document.layout_json.to_string())
                     .bind(document.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(document.wiki_metadata.to_string())
                     .bind(&document.owner_subject)
                     .bind(document.version)
                     .bind(document.created_at.naive_utc())
                     .bind(document.updated_at.naive_utc())
                     .execute(pool)
                     .await?;
-                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(version_id.to_string())
                     .bind(document.id.to_string())
                     .bind(document.version)
@@ -368,6 +407,7 @@ impl Store {
                     .bind(&document.dbml)
                     .bind(document.layout_json.to_string())
                     .bind(document.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(document.wiki_metadata.to_string())
                     .bind(document.created_at.naive_utc())
                     .execute(pool)
                     .await?;
@@ -390,7 +430,7 @@ impl Store {
         match self {
             Store::Sqlite(pool) => {
                 let mut tx = pool.begin().await?;
-                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(version_id.to_string())
                     .bind(id.to_string())
                     .bind(next_version)
@@ -399,14 +439,16 @@ impl Store {
                     .bind(&input.dbml)
                     .bind(input.layout_json.to_string())
                     .bind(input.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(input.wiki_metadata.to_string())
                     .bind(now.to_rfc3339())
                     .execute(&mut *tx)
                     .await?;
-                sqlx::query("UPDATE documents SET name = ?, dbml = ?, layout_json = ?, parsed_schema = ?, version = ?, updated_at = ? WHERE id = ?")
+                sqlx::query("UPDATE documents SET name = ?, dbml = ?, layout_json = ?, parsed_schema = ?, wiki_metadata = ?, version = ?, updated_at = ? WHERE id = ?")
                     .bind(&input.name)
                     .bind(&input.dbml)
                     .bind(input.layout_json.to_string())
                     .bind(input.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(input.wiki_metadata.to_string())
                     .bind(next_version)
                     .bind(now.to_rfc3339())
                     .bind(id.to_string())
@@ -416,7 +458,7 @@ impl Store {
             }
             Store::Postgres(pool) => {
                 let mut tx = pool.begin().await?;
-                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)")
+                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
                     .bind(version_id)
                     .bind(id)
                     .bind(next_version)
@@ -425,14 +467,16 @@ impl Store {
                     .bind(&input.dbml)
                     .bind(&input.layout_json)
                     .bind(&input.parsed_schema)
+                    .bind(&input.wiki_metadata)
                     .bind(now)
                     .execute(&mut *tx)
                     .await?;
-                sqlx::query("UPDATE documents SET name = $1, dbml = $2, layout_json = $3, parsed_schema = $4, version = $5, updated_at = $6 WHERE id = $7")
+                sqlx::query("UPDATE documents SET name = $1, dbml = $2, layout_json = $3, parsed_schema = $4, wiki_metadata = $5, version = $6, updated_at = $7 WHERE id = $8")
                     .bind(&input.name)
                     .bind(&input.dbml)
                     .bind(&input.layout_json)
                     .bind(&input.parsed_schema)
+                    .bind(&input.wiki_metadata)
                     .bind(next_version)
                     .bind(now)
                     .bind(id)
@@ -442,7 +486,7 @@ impl Store {
             }
             Store::MySql(pool) => {
                 let mut tx = pool.begin().await?;
-                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO document_versions (id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(version_id.to_string())
                     .bind(id.to_string())
                     .bind(next_version)
@@ -451,14 +495,16 @@ impl Store {
                     .bind(&input.dbml)
                     .bind(input.layout_json.to_string())
                     .bind(input.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(input.wiki_metadata.to_string())
                     .bind(now.naive_utc())
                     .execute(&mut *tx)
                     .await?;
-                sqlx::query("UPDATE documents SET name = ?, dbml = ?, layout_json = ?, parsed_schema = ?, version = ?, updated_at = ? WHERE id = ?")
+                sqlx::query("UPDATE documents SET name = ?, dbml = ?, layout_json = ?, parsed_schema = ?, wiki_metadata = ?, version = ?, updated_at = ? WHERE id = ?")
                     .bind(&input.name)
                     .bind(&input.dbml)
                     .bind(input.layout_json.to_string())
                     .bind(input.parsed_schema.as_ref().map(serde_json::Value::to_string))
+                    .bind(input.wiki_metadata.to_string())
                     .bind(next_version)
                     .bind(now.naive_utc())
                     .bind(id.to_string())
@@ -473,7 +519,7 @@ impl Store {
     pub async fn get_document(&self, id: Uuid) -> Result<Document, AppError> {
         match self {
             Store::Sqlite(pool) => {
-                let row = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at FROM documents WHERE id = ?")
+                let row = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at FROM documents WHERE id = ?")
                     .bind(id.to_string())
                     .fetch_optional(pool)
                     .await?
@@ -481,7 +527,7 @@ impl Store {
                 document_from_sqlite(row)
             }
             Store::Postgres(pool) => {
-                let row = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at FROM documents WHERE id = $1")
+                let row = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at FROM documents WHERE id = $1")
                     .bind(id)
                     .fetch_optional(pool)
                     .await?
@@ -492,6 +538,7 @@ impl Store {
                     dbml: row.get("dbml"),
                     layout_json: row.get("layout_json"),
                     parsed_schema: row.get("parsed_schema"),
+                    wiki_metadata: row.get("wiki_metadata"),
                     owner_subject: row.get("owner_subject"),
                     version: row.get("version"),
                     created_at: row.get("created_at"),
@@ -499,7 +546,7 @@ impl Store {
                 })
             }
             Store::MySql(pool) => {
-                let row = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, owner_subject, version, created_at, updated_at FROM documents WHERE id = ?")
+                let row = sqlx::query("SELECT id, name, dbml, layout_json, parsed_schema, wiki_metadata, owner_subject, version, created_at, updated_at FROM documents WHERE id = ?")
                     .bind(id.to_string())
                     .fetch_optional(pool)
                     .await?
@@ -595,7 +642,7 @@ impl Store {
     ) -> Result<DocumentVersion, AppError> {
         match self {
             Store::Sqlite(pool) => {
-                let row = sqlx::query("SELECT id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at FROM document_versions WHERE document_id = ? AND version_number = ?")
+                let row = sqlx::query("SELECT id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at FROM document_versions WHERE document_id = ? AND version_number = ?")
                     .bind(document_id.to_string())
                     .bind(version_number)
                     .fetch_optional(pool)
@@ -604,7 +651,7 @@ impl Store {
                 document_version_from_sqlite(row)
             }
             Store::Postgres(pool) => {
-                let row = sqlx::query("SELECT id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at FROM document_versions WHERE document_id = $1 AND version_number = $2")
+                let row = sqlx::query("SELECT id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at FROM document_versions WHERE document_id = $1 AND version_number = $2")
                     .bind(document_id)
                     .bind(version_number)
                     .fetch_optional(pool)
@@ -619,11 +666,12 @@ impl Store {
                     dbml: row.get("dbml"),
                     layout_json: row.get("layout_json"),
                     parsed_schema: row.get("parsed_schema"),
+                    wiki_metadata: row.get("wiki_metadata"),
                     created_at: row.get("created_at"),
                 })
             }
             Store::MySql(pool) => {
-                let row = sqlx::query("SELECT id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, created_at FROM document_versions WHERE document_id = ? AND version_number = ?")
+                let row = sqlx::query("SELECT id, document_id, version_number, label, note, dbml, layout_json, parsed_schema, wiki_metadata, created_at FROM document_versions WHERE document_id = ? AND version_number = ?")
                     .bind(document_id.to_string())
                     .bind(version_number)
                     .fetch_optional(pool)
@@ -639,6 +687,7 @@ fn document_from_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<Document, AppErr
     let id: String = row.get("id");
     let layout_json: String = row.get("layout_json");
     let parsed_schema: Option<String> = row.get("parsed_schema");
+    let wiki_metadata: Option<String> = row.get("wiki_metadata");
     let created_at: String = row.get("created_at");
     let updated_at: String = row.get("updated_at");
     Ok(Document {
@@ -649,6 +698,7 @@ fn document_from_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<Document, AppErr
         parsed_schema: parsed_schema
             .as_deref()
             .and_then(|value| serde_json::from_str(value).ok()),
+        wiki_metadata: parse_json_value(wiki_metadata.as_deref()),
         owner_subject: row.get("owner_subject"),
         version: row.get("version"),
         created_at: DateTime::parse_from_rfc3339(&created_at)
@@ -664,6 +714,7 @@ fn document_from_mysql(row: sqlx::mysql::MySqlRow) -> Result<Document, AppError>
     let id: String = row.get("id");
     let layout_json: String = row.get("layout_json");
     let parsed_schema: Option<String> = row.get("parsed_schema");
+    let wiki_metadata: Option<String> = row.get("wiki_metadata");
     let created_at: chrono::NaiveDateTime = row.get("created_at");
     let updated_at: chrono::NaiveDateTime = row.get("updated_at");
     Ok(Document {
@@ -674,6 +725,7 @@ fn document_from_mysql(row: sqlx::mysql::MySqlRow) -> Result<Document, AppError>
         parsed_schema: parsed_schema
             .as_deref()
             .and_then(|value| serde_json::from_str(value).ok()),
+        wiki_metadata: parse_json_value(wiki_metadata.as_deref()),
         owner_subject: row.get("owner_subject"),
         version: row.get("version"),
         created_at: DateTime::from_naive_utc_and_offset(created_at, Utc),
@@ -711,6 +763,7 @@ fn document_version_from_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<Document
     let document_id: String = row.get("document_id");
     let layout_json: String = row.get("layout_json");
     let parsed_schema: Option<String> = row.get("parsed_schema");
+    let wiki_metadata: Option<String> = row.get("wiki_metadata");
     let created_at: String = row.get("created_at");
     Ok(DocumentVersion {
         id: Uuid::parse_str(&id).map_err(|error| AppError::BadRequest(error.to_string()))?,
@@ -724,6 +777,7 @@ fn document_version_from_sqlite(row: sqlx::sqlite::SqliteRow) -> Result<Document
         parsed_schema: parsed_schema
             .as_deref()
             .and_then(|value| serde_json::from_str(value).ok()),
+        wiki_metadata: parse_json_value(wiki_metadata.as_deref()),
         created_at: DateTime::parse_from_rfc3339(&created_at)
             .map_err(|error| AppError::BadRequest(error.to_string()))?
             .with_timezone(&Utc),
@@ -752,6 +806,7 @@ fn document_version_from_mysql(row: sqlx::mysql::MySqlRow) -> Result<DocumentVer
     let document_id: String = row.get("document_id");
     let layout_json: String = row.get("layout_json");
     let parsed_schema: Option<String> = row.get("parsed_schema");
+    let wiki_metadata: Option<String> = row.get("wiki_metadata");
     let created_at: chrono::NaiveDateTime = row.get("created_at");
     Ok(DocumentVersion {
         id: Uuid::parse_str(&id).map_err(|error| AppError::BadRequest(error.to_string()))?,
@@ -765,6 +820,13 @@ fn document_version_from_mysql(row: sqlx::mysql::MySqlRow) -> Result<DocumentVer
         parsed_schema: parsed_schema
             .as_deref()
             .and_then(|value| serde_json::from_str(value).ok()),
+        wiki_metadata: parse_json_value(wiki_metadata.as_deref()),
         created_at: DateTime::from_naive_utc_and_offset(created_at, Utc),
     })
+}
+
+fn parse_json_value(value: Option<&str>) -> serde_json::Value {
+    value
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
 }

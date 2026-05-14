@@ -12,8 +12,10 @@ import {
   type NodeChange,
   type NodeProps,
 } from '@xyflow/react';
-import { Copy, Download, FileJson, Link2, Plus, Save, Settings, Trash2, Upload, X } from 'lucide-react';
+import { BookOpen, Code2, Copy, Database, Download, FileJson, Link2, Plus, Save, Settings, Trash2, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { deleteDocument, getDocumentVersion, getSession, listDocuments, listDocumentVersions, saveDocument, type Session } from './api';
 import {
   addColumn,
@@ -36,7 +38,7 @@ import {
   updateTablePosition,
   validateDbml,
 } from './dbml';
-import type { DbmlColumn, DbmlDocumentModel, DbmlTable, DocumentVersionSummary, Role, SavedDocument } from './types';
+import type { DbmlColumn, DbmlDocumentModel, DbmlTable, DocumentVersionSummary, Role, SavedDocument, WikiMetadata } from './types';
 
 type TableNodeData = {
   table: DbmlTable;
@@ -61,12 +63,20 @@ const nodeTypes = {
   table: TableNode,
 };
 
+const emptyWikiMetadata: WikiMetadata = {
+  readme: '',
+  schemaNotes: {},
+};
+
 export function App() {
   const [role, setRole] = useState<Role>('editor');
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('dbml_auth_token') ?? '');
   const [configToken, setConfigToken] = useState(() => localStorage.getItem('dbml_auth_token') ?? '');
   const [session, setSession] = useState<Session | null>(null);
   const [dbml, setDbml] = useState(defaultDbml);
+  const [view, setView] = useState<'editor' | 'wiki'>('editor');
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [wikiMetadata, setWikiMetadata] = useState<WikiMetadata>(emptyWikiMetadata);
   const [parseError, setParseError] = useState<string | null>(null);
   const [model, setModel] = useState<DbmlDocumentModel>(() => parseDbmlToModel(defaultDbml));
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
@@ -166,15 +176,21 @@ export function App() {
     if (readonly) return;
     const next = value ?? '';
     setDbml(next);
-    const error = validateDbml(next);
-    setParseError(error);
-    if (!error) setModel(parseDbmlToModel(next));
+    setParseError(validateDbml(next));
+    setModel(parseDbmlToModel(next));
   }
 
-  function loadDbmlDocument(nextDbml: string, name: string, document: SavedDocument | null, versionNumber = document?.version ?? null) {
+  function loadDbmlDocument(
+    nextDbml: string,
+    name: string,
+    document: SavedDocument | null,
+    versionNumber = document?.version ?? null,
+    metadata = normalizeWikiMetadata(document?.wikiMetadata),
+  ) {
     setActiveDocument(document);
     setActiveVersionNumber(versionNumber);
     if (!document) setVersions([]);
+    setWikiMetadata(metadata);
     setDocumentName(name);
     setDbml(nextDbml);
     setParseError(validateDbml(nextDbml));
@@ -257,6 +273,7 @@ export function App() {
       dbml,
       layoutJson: { tables: model.tables.map(({ id, x, y }) => ({ id, x, y })) },
       parsedSchema: parseDbmlSchemaCache(dbml),
+      wikiMetadata,
       note,
     }, authToken || undefined);
     setActiveDocument(saved);
@@ -277,11 +294,11 @@ export function App() {
   async function loadVersion(versionNumber: number) {
     if (!activeDocument) return;
     if (versionNumber === activeDocument.version) {
-      loadDbmlDocument(activeDocument.dbml, activeDocument.name, activeDocument, activeDocument.version);
+      loadDbmlDocument(activeDocument.dbml, activeDocument.name, activeDocument, activeDocument.version, normalizeWikiMetadata(activeDocument.wikiMetadata));
       return;
     }
     const version = await getDocumentVersion(activeDocument.id, versionNumber, authToken || undefined);
-    loadDbmlDocument(version.dbml, activeDocument.name, activeDocument, version.versionNumber);
+    loadDbmlDocument(version.dbml, activeDocument.name, activeDocument, version.versionNumber, normalizeWikiMetadata(version.wikiMetadata));
   }
 
   function startNewSchema() {
@@ -417,6 +434,16 @@ export function App() {
             ))}
           </select>
           <input value={documentName} onChange={(event) => setDocumentName(event.target.value)} disabled={readonly} aria-label="Document name" />
+          <div className="view-tabs" role="tablist" aria-label="Workspace view">
+            <button className={view === 'editor' ? 'is-active' : ''} onClick={() => setView('editor')} role="tab" aria-selected={view === 'editor'} title="Editor view">
+              <Code2 size={16} />
+              Editor
+            </button>
+            <button className={view === 'wiki' ? 'is-active' : ''} onClick={() => setView('wiki')} role="tab" aria-selected={view === 'wiki'} title="Wiki view">
+              <BookOpen size={16} />
+              Wiki
+            </button>
+          </div>
           <button onClick={() => applyModel(addTable(model))} disabled={readonly} title="Add table">
             <Plus size={18} />
           </button>
@@ -425,6 +452,9 @@ export function App() {
           </button>
           <button onClick={() => setImportOpen(true)} disabled={readonly} title="Import schema">
             <Upload size={18} />
+          </button>
+          <button onClick={() => setDocsOpen((open) => !open)} disabled={readonly} title="Documentation">
+            <BookOpen size={18} />
           </button>
           <button onClick={onSave} disabled={readonly} title="Save">
             <Save size={18} />
@@ -471,58 +501,79 @@ export function App() {
             </div>
           </div>
         )}
-        <section className="editor-pane">
-          <div className="pane-header">
-            <span>DBML Text</span>
-            {parseError && <strong>{parseError}</strong>}
-          </div>
-          <textarea className="dbml-textarea" spellCheck={false} value={dbml} onChange={(event) => onTextChange(event.target.value)} readOnly={readonly} />
-        </section>
-
-        <section className="diagram-pane">
-          <div className="pane-header">
-            <span>Diagram</span>
-            {linkingFrom && (
-              <div className="link-mode">
-                <span>Linking from {linkLabel(model, linkingFrom)}</span>
-                <button onClick={() => setLinkingFrom(null)}>Cancel</button>
+        {docsOpen && (
+          <DocumentationDrawer
+            model={model}
+            metadata={wikiMetadata}
+            onChange={setWikiMetadata}
+            onClose={() => setDocsOpen(false)}
+          />
+        )}
+        {view === 'editor' ? (
+          <>
+            <section className="editor-pane">
+              <div className="pane-header">
+                <span>DBML Text</span>
+                {parseError && <strong>{parseError}</strong>}
               </div>
-            )}
-          </div>
-          <ReactFlow
-            nodes={visualNodes}
-            edges={edges}
-            fitView
-            nodeTypes={nodeTypes}
-            onConnect={onConnect}
-            onNodesChange={onNodesChange}
-            onNodeClick={(_, node) => setSelectedTableId(node.id)}
-            onEdgeClick={(_, edge) => setSelectedRefId(edge.id)}
-            onPaneClick={() => setSelectedRefId(null)}
-            onNodeDragStop={onNodeDragStop}
-            nodesDraggable={!readonly}
-            nodesConnectable={!readonly}
-          >
-            <Background />
-            <Controls />
-            <MiniMap pannable zoomable />
-          </ReactFlow>
-          {selectedRefId && (
-            <div className="edge-toolbar">
-              <span>{model.refs.find((ref) => ref.id === selectedRefId)?.fromColumn} relationship</span>
-              <button
-                onClick={() => {
-                  applyModel(deleteRelationship(model, selectedRefId));
-                  setSelectedRefId(null);
-                }}
-                disabled={readonly}
-                title="Delete relationship"
+              <textarea className="dbml-textarea" spellCheck={false} value={dbml} onChange={(event) => onTextChange(event.target.value)} readOnly={readonly} />
+            </section>
+
+            <section className="diagram-pane">
+              <div className="pane-header">
+                <span>Diagram</span>
+                {linkingFrom && (
+                  <div className="link-mode">
+                    <span>Linking from {linkLabel(model, linkingFrom)}</span>
+                    <button onClick={() => setLinkingFrom(null)}>Cancel</button>
+                  </div>
+                )}
+              </div>
+              <ReactFlow
+                nodes={visualNodes}
+                edges={edges}
+                fitView
+                nodeTypes={nodeTypes}
+                onConnect={onConnect}
+                onNodesChange={onNodesChange}
+                onNodeClick={(_, node) => setSelectedTableId(node.id)}
+                onEdgeClick={(_, edge) => setSelectedRefId(edge.id)}
+                onPaneClick={() => setSelectedRefId(null)}
+                onNodeDragStop={onNodeDragStop}
+                nodesDraggable={!readonly}
+                nodesConnectable={!readonly}
               >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          )}
-        </section>
+                <Background />
+                <Controls />
+                <MiniMap pannable zoomable />
+              </ReactFlow>
+              {selectedRefId && (
+                <div className="edge-toolbar">
+                  <span>{model.refs.find((ref) => ref.id === selectedRefId)?.fromColumn} relationship</span>
+                  <button
+                    onClick={() => {
+                      applyModel(deleteRelationship(model, selectedRefId));
+                      setSelectedRefId(null);
+                    }}
+                    disabled={readonly}
+                    title="Delete relationship"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
+            </section>
+          </>
+        ) : (
+          <WikiView
+            model={model}
+            document={activeDocument}
+            versions={versions}
+            documentName={documentName}
+            metadata={wikiMetadata}
+            parseError={parseError}
+          />
+        )}
 
         {exportOpen && (
           <aside className="export-drawer">
@@ -642,6 +693,365 @@ export function App() {
   );
 }
 
+function DocumentationDrawer({
+  model,
+  metadata,
+  onChange,
+  onClose,
+}: {
+  model: DbmlDocumentModel;
+  metadata: WikiMetadata;
+  onChange: (metadata: WikiMetadata) => void;
+  onClose: () => void;
+}) {
+  const schemas = useMemo(() => schemaNamesForModel(model), [model]);
+  return (
+    <aside className="documentation-drawer">
+      <div className="pane-header">
+        <span>Documentation</span>
+        <button onClick={onClose} title="Close documentation">
+          <X size={16} />
+        </button>
+      </div>
+      <div className="documentation-body">
+        <label>
+          Project README
+          <textarea
+            value={metadata.readme}
+            onChange={(event) => onChange({ ...metadata, readme: event.target.value })}
+            placeholder="Write a Markdown overview for this database."
+          />
+        </label>
+        {schemas.map((schema) => (
+          <label key={schema}>
+            Schema note: {schema}
+            <textarea
+              value={metadata.schemaNotes[schema] ?? ''}
+              onChange={(event) =>
+                onChange({
+                  ...metadata,
+                  schemaNotes: { ...metadata.schemaNotes, [schema]: event.target.value },
+                })
+              }
+              placeholder={`Describe the ${schema} schema.`}
+            />
+          </label>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function WikiView({
+  model,
+  document,
+  versions,
+  documentName,
+  metadata,
+  parseError,
+}: {
+  model: DbmlDocumentModel;
+  document: SavedDocument | null;
+  versions: DocumentVersionSummary[];
+  documentName: string;
+  metadata: WikiMetadata;
+  parseError: string | null;
+}) {
+  const schemas = useMemo(() => groupTablesBySchema(model.tables), [model.tables]);
+  const referenceMap = useMemo(() => buildReferenceMap(model), [model]);
+  const fieldCount = model.tables.reduce((sum, table) => sum + table.columns.length, 0);
+  const displayName = model.project?.name || documentName || 'Untitled schema';
+  const readme = metadata.readme.trim() || model.project?.note;
+
+  if (parseError && model.tables.length === 0) {
+    return (
+      <section className="wiki-view">
+        <div className="wiki-error">
+          <strong>Wiki unavailable while DBML has errors</strong>
+          <span>{parseError}</span>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="wiki-view">
+      <div className="wiki-shell">
+        {parseError && (
+          <div className="wiki-error wiki-error--inline" role="alert">
+            <strong>Showing last successful parse</strong>
+            <span>{parseError}</span>
+          </div>
+        )}
+        <header className="wiki-hero">
+          <div className="wiki-title">
+            <Database size={24} />
+            <div>
+              <h2>{displayName}</h2>
+              <span>{model.project?.databaseType ?? 'DBML schema documentation'}</span>
+            </div>
+          </div>
+          <div className="wiki-metadata-grid">
+            <MetaItem label="Creator" value={document?.ownerSubject ?? 'Unsaved'} />
+            <MetaItem label="Database" value={model.project?.databaseType ?? 'Not specified'} />
+            <MetaItem label="Created" value={formatDateTime(document?.createdAt)} />
+            <MetaItem label="Modified" value={formatDateTime(document?.updatedAt)} />
+            <MetaItem label="Version" value={document ? `v${document.version}` : 'Draft'} />
+          </div>
+          {readme && <MarkdownNote value={readme} />}
+        </header>
+
+        <div className="wiki-stats" aria-label="Schema statistics">
+          <Stat value={model.tables.length} label="Tables" />
+          <Stat value={fieldCount} label="Fields" />
+          <Stat value={model.enums.length} label="Enums" />
+          <Stat value={model.refs.length} label="Refs" />
+        </div>
+
+        {versions.length > 0 && <RecentActivity versions={versions} owner={document?.ownerSubject ?? 'Unknown'} />}
+
+        {model.tables.length === 0 ? (
+          <div className="empty-state wiki-empty">No tables found in this schema.</div>
+        ) : (
+          schemas.map(([schema, tables]) => (
+            <SchemaSection key={schema} schema={schema} tables={tables} note={metadata.schemaNotes[schema]} referenceMap={referenceMap} />
+          ))
+        )}
+
+        {model.enums.length > 0 && <EnumDocs enums={model.enums} />}
+        {model.refs.length > 0 && <RelationshipDocs refs={model.refs} />}
+      </div>
+    </section>
+  );
+}
+
+function SchemaSection({
+  schema,
+  tables,
+  note,
+  referenceMap,
+}: {
+  schema: string;
+  tables: DbmlTable[];
+  note?: string;
+  referenceMap: Map<string, string[]>;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <section className="wiki-section">
+      <button className="wiki-section-toggle" onClick={() => setCollapsed((value) => !value)}>
+        <span>{collapsed ? 'Show' : 'Hide'}</span>
+        <strong>{schema}</strong>
+        <small>{tables.length} tables</small>
+      </button>
+      {note?.trim() && <MarkdownNote value={note} />}
+      {!collapsed && (
+        <div className="table-doc-list">
+          {tables.map((table) => (
+            <TableDoc key={table.id} table={table} referenceMap={referenceMap} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TableDoc({ table, referenceMap }: { table: DbmlTable; referenceMap: Map<string, string[]> }) {
+  const qualifiedName = table.schema ? `${table.schema}.${table.name}` : table.name;
+  const preview = table.records
+    ? { label: 'Sample data', columns: table.records.columns, rows: table.records.rows }
+    : { label: 'Generated preview', columns: table.columns.map((column) => column.name), rows: generateMockRows(table) };
+  return (
+    <article className="table-doc" id={`table-${table.id}`}>
+      <header className="table-doc-header" style={{ borderColor: table.headerColor ?? undefined }}>
+        <div>
+          <h3>{qualifiedName}</h3>
+          {table.alias && <span>alias {table.alias}</span>}
+        </div>
+        <small>{table.columns.length} fields</small>
+      </header>
+      {table.note && <MarkdownNote value={table.note} />}
+      <div className="table-doc-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Settings</th>
+              <th>References</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {table.columns.map((column) => (
+              <FieldRow key={column.id} table={table} column={column} references={referenceMap.get(referenceKey(table, column.name)) ?? []} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <TablePreview label={preview.label} columns={preview.columns} rows={preview.rows} />
+    </article>
+  );
+}
+
+function TablePreview({ label, columns, rows }: { label: string; columns: string[]; rows: string[][] }) {
+  if (!columns.length) return null;
+  return (
+    <div className="table-preview">
+      <div className="table-preview-header">
+        <strong>{label}</strong>
+        <span>{rows.length} rows</span>
+      </div>
+      <div className="table-doc-scroll">
+        <table>
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={index}>
+                {columns.map((column, columnIndex) => (
+                  <td key={`${index}-${column}`}>
+                    <code>{row[columnIndex] ?? ''}</code>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FieldRow({ table, column, references }: { table: DbmlTable; column: DbmlColumn; references: string[] }) {
+  const isPrimary = column.settings.some((setting) => ['pk', 'primary key'].includes(setting.key.toLowerCase()));
+  return (
+    <tr>
+      <td>
+        <code>{column.name}</code>
+        {isPrimary && <span className="field-pill field-pill-primary">PK</span>}
+      </td>
+      <td>
+        <code>{column.type}</code>
+      </td>
+      <td>
+        <FieldSettings settings={column.settings} />
+      </td>
+      <td>
+        {references.length > 0 ? (
+          <div className="field-refs">
+            {references.map((ref) => (
+              <code key={`${table.id}-${column.id}-${ref}`}>{ref}</code>
+            ))}
+          </div>
+        ) : (
+          <span className="muted">None</span>
+        )}
+      </td>
+      <td>{column.note ? <MarkdownNote value={column.note} compact /> : <span className="muted">None</span>}</td>
+    </tr>
+  );
+}
+
+function FieldSettings({ settings }: { settings: DbmlColumn['settings'] }) {
+  const visible = settings.filter((setting) => setting.key.toLowerCase() !== 'note');
+  if (!visible.length) return <span className="muted">None</span>;
+  return (
+    <div className="field-settings">
+      {visible.map((setting) => (
+        <span className="field-pill" key={`${setting.key}:${setting.value ?? ''}`}>
+          {setting.value ? `${setting.key}: ${setting.value}` : setting.key}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function EnumDocs({ enums }: { enums: DbmlDocumentModel['enums'] }) {
+  return (
+    <section className="wiki-section">
+      <h3 className="wiki-section-heading">Enums</h3>
+      <div className="enum-grid">
+        {enums.map((item) => (
+          <article className="enum-doc" key={item.id}>
+            <h4>{item.schema ? `${item.schema}.${item.name}` : item.name}</h4>
+            <div>
+              {item.values.map((value) => (
+                <code key={value}>{value}</code>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RelationshipDocs({ refs }: { refs: DbmlDocumentModel['refs'] }) {
+  return (
+    <section className="wiki-section">
+      <h3 className="wiki-section-heading">Relationships</h3>
+      <div className="relationship-list">
+        {refs.map((ref) => (
+          <code key={ref.id}>
+            {ref.fromTable}.{ref.fromColumn} {ref.relation} {ref.toTable}.{ref.toColumn}
+          </code>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MarkdownNote({ value, compact = false }: { value: string; compact?: boolean }) {
+  return (
+    <div className={compact ? 'markdown-note markdown-note-compact' : 'markdown-note'}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
+    </div>
+  );
+}
+
+function MetaItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="wiki-meta-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RecentActivity({ versions, owner }: { versions: DocumentVersionSummary[]; owner: string }) {
+  return (
+    <section className="wiki-section">
+      <h3 className="wiki-section-heading">Recent activity</h3>
+      <div className="activity-list">
+        {versions.slice(0, 5).map((version) => (
+          <article className="activity-item" key={version.id}>
+            <strong>v{version.versionNumber}</strong>
+            <span>{version.note || version.label}</span>
+            <small>
+              {owner} · {formatDateTime(version.createdAt)}
+            </small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Stat({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="wiki-stat">
+      <strong>{value}</strong>
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function TableNode({ data }: NodeProps<Node<TableNodeData, 'table'>>) {
   const { table, readonly } = data;
   return (
@@ -756,4 +1166,82 @@ function safeFileName(input: string) {
 
 function isLegacyImportFormat(format: ImportFormat) {
   return format === 'mysqlLegacy' || format === 'postgresLegacy' || format === 'mssqlLegacy';
+}
+
+function groupTablesBySchema(tables: DbmlTable[]): Array<[string, DbmlTable[]]> {
+  const groups = new Map<string, DbmlTable[]>();
+  for (const table of tables) {
+    const schema = table.schema ?? 'public';
+    groups.set(schema, [...(groups.get(schema) ?? []), table]);
+  }
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+function schemaNamesForModel(model: DbmlDocumentModel) {
+  return [...new Set([...model.tables.map((table) => table.schema ?? 'public'), ...model.enums.map((item) => item.schema ?? 'public')])].sort();
+}
+
+function normalizeWikiMetadata(input: unknown): WikiMetadata {
+  if (!input || typeof input !== 'object') return emptyWikiMetadata;
+  const value = input as Partial<WikiMetadata>;
+  return {
+    readme: typeof value.readme === 'string' ? value.readme : '',
+    schemaNotes: value.schemaNotes && typeof value.schemaNotes === 'object' ? value.schemaNotes : {},
+  };
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return 'Not saved';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+}
+
+function generateMockRows(table: DbmlTable) {
+  return [1, 2, 3].map((index) => table.columns.map((column) => mockValue(table, column, index)));
+}
+
+function mockValue(table: DbmlTable, column: DbmlColumn, index: number) {
+  const name = column.name.toLowerCase();
+  const type = column.type.toLowerCase();
+  if (name === 'id' || name.endsWith('_id')) return String(index);
+  if (type.includes('bool')) return index % 2 === 0 ? 'false' : 'true';
+  if (type.includes('int') || type.includes('decimal') || type.includes('numeric') || type.includes('float') || type.includes('double')) return String(index * 10);
+  if (type.includes('date') || type.includes('time')) return `2026-05-${String(10 + index).padStart(2, '0')}`;
+  if (name.includes('email')) return `user${index}@example.com`;
+  if (name.includes('status')) return index === 1 ? 'active' : 'pending';
+  if (name.includes('name')) return `${table.name} ${index}`;
+  return `${column.name}_${index}`;
+}
+
+function buildReferenceMap(model: DbmlDocumentModel) {
+  const map = new Map<string, string[]>();
+  const tableLookup = new Map<string, DbmlTable>();
+  for (const table of model.tables) {
+    tableLookup.set(table.name, table);
+    if (table.alias) tableLookup.set(table.alias, table);
+    if (table.schema) tableLookup.set(`${table.schema}.${table.name}`, table);
+  }
+
+  for (const ref of model.refs) {
+    const fromTable = tableLookup.get(ref.fromTable);
+    const toTable = tableLookup.get(ref.toTable);
+    const fromName = `${ref.fromTable}.${ref.fromColumn}`;
+    const toName = `${ref.toTable}.${ref.toColumn}`;
+    addReference(map, fromTable ? referenceKey(fromTable, ref.fromColumn) : `${ref.fromTable}.${ref.fromColumn}`, `to ${toName}`);
+    addReference(map, toTable ? referenceKey(toTable, ref.toColumn) : `${ref.toTable}.${ref.toColumn}`, `from ${fromName}`);
+  }
+
+  return map;
+}
+
+function referenceKey(table: DbmlTable, columnName: string) {
+  return `${table.id}.${columnName}`;
+}
+
+function addReference(map: Map<string, string[]>, key: string, label: string) {
+  map.set(key, [...(map.get(key) ?? []), label]);
 }

@@ -21,6 +21,7 @@ export type DbmlTable = {
   note?: string;
   headerColor?: string;
   columns: DbmlColumn[];
+  records?: DbmlRecordSet;
   x: number;
   y: number;
 };
@@ -47,6 +48,12 @@ export type DbmlProject = {
   note?: string;
 };
 
+export type DbmlRecordSet = {
+  columns: string[];
+  rows: string[][];
+  source: 'records';
+};
+
 export type DbmlDocumentModel = {
   project?: DbmlProject;
   tables: DbmlTable[];
@@ -55,12 +62,19 @@ export type DbmlDocumentModel = {
   extras: string[];
 };
 
+export type WikiMetadata = {
+  readme: string;
+  schemaNotes: Record<string, string>;
+};
+
 export type SavedDocument = {
   id: string;
   name: string;
   dbml: string;
   layoutJson: unknown;
   parsedSchema?: unknown | null;
+  wikiMetadata?: WikiMetadata | null;
+  ownerSubject: string;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -79,4 +93,5 @@ export type DocumentVersion = DocumentVersionSummary & {
   dbml: string;
   layoutJson: unknown;
   parsedSchema?: unknown | null;
+  wikiMetadata?: WikiMetadata | null;
 };
