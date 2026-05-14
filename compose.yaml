@@ -1,0 +1,67 @@
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      STORAGE_PROVIDER: sqlite
+      DATABASE_URL: sqlite:///app/data/dbml-editor.sqlite
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      RUST_LOG: info,tower_http=info
+    volumes:
+      - server-data:/app/data
+    networks:
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+
+      # DBMS API
+      - "traefik.http.routers.dbms-api.rule=Host(`dbms.app.apecia.local`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.dbms-api.entrypoints=websecure"
+      - "traefik.http.routers.dbms-api.tls=true"
+      - "traefik.http.routers.dbms-api.service=dbms-api"
+      - "traefik.http.services.dbms-api.loadbalancer.server.port=8080"
+
+      # HTTP -> HTTPS Redirect
+      - "traefik.http.routers.dbms-api-http.rule=Host(`dbms.app.apecia.local`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.dbms-api-http.entrypoints=web"
+      - "traefik.http.routers.dbms-api-http.middlewares=dbms-api-redirect"
+      - "traefik.http.middlewares.dbms-api-redirect.redirectscheme.scheme=https"
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+      args:
+        VITE_API_BASE: /api
+    depends_on:
+      - server
+    networks:
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+
+      # DBMS app
+      - "traefik.http.routers.dbms-app.rule=Host(`dbms.app.apecia.local`) && !PathPrefix(`/api`)"
+      - "traefik.http.routers.dbms-app.entrypoints=websecure"
+      - "traefik.http.routers.dbms-app.tls=true"
+      - "traefik.http.routers.dbms-app.service=dbms-app"
+      - "traefik.http.services.dbms-app.loadbalancer.server.port=80"
+
+      # HTTP -> HTTPS Redirect
+      - "traefik.http.routers.dbms-app-http.rule=Host(`dbms.app.apecia.local`) && !PathPrefix(`/api`)"
+      - "traefik.http.routers.dbms-app-http.entrypoints=web"
+      - "traefik.http.routers.dbms-app-http.middlewares=dbms-app-redirect"
+      - "traefik.http.middlewares.dbms-app-redirect.redirectscheme.scheme=https"
+    restart: unless-stopped
+
+networks:
+  traefik-public:
+    external: true
+
+volumes:
+  server-data:

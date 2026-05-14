@@ -1,0 +1,139 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: dbms-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "event: ${{ github.event_name }}"
+          echo "owner: ${{ github.repository_owner }}"
+          echo "ref: ${{ github.ref_name }}"
+          # test with normal tag
+  deploy:
+    name: Deploy dbms backend
+    if: >
+      github.repository_owner == 'apecia-org' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          !startsWith(github.event.head_commit.message, 'cicd:') &&
+          !startsWith(github.event.head_commit.message, 'docs:')
+        )
+      )
+    runs-on:
+      group: Apecia-Local-Runner
+
+    env:
+      DEPLOY_DIR: ${{ vars.PRODUCTION_DEPLOY_DIR }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PRODUCTION_ENV_FILE: ${{ secrets.PRODUCTION_ENV_FILE }}
+      TRAEFIK_NETWORK: traefik-public
+
+    steps:
+      - name: 1. Pull repository
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          BRANCH="${GITHUB_REF_NAME:-main}"
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          DEPLOY_DIR="${DEPLOY_DIR:-$HOME/apps/${GITHUB_REPOSITORY##*/}}"
+          DEPLOY_DIR="${DEPLOY_DIR/#\~/$HOME}"
+
+          if [ "$DEPLOY_DIR" = "/" ] || [ "$DEPLOY_DIR" = "$HOME" ]; then
+            echo "Refusing unsafe DEPLOY_DIR: $DEPLOY_DIR"
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "$DEPLOY_DIR")"
+
+          if [ -d "$DEPLOY_DIR/.git" ]; then
+            git -C "$DEPLOY_DIR" remote set-url origin "$REPO_URL"
+            git -C "$DEPLOY_DIR" fetch --prune origin "$BRANCH"
+            git -C "$DEPLOY_DIR" reset --hard "origin/$BRANCH"
+            git -C "$DEPLOY_DIR" clean -ffdx -e .env
+          else
+            rm -rf "$DEPLOY_DIR"
+            git clone --branch "$BRANCH" "$REPO_URL" "$DEPLOY_DIR"
+          fi
+
+          printf 'BRANCH=%s\n' "$BRANCH" >> "$GITHUB_ENV"
+          printf 'DEPLOY_DIR=%s\n' "$DEPLOY_DIR" >> "$GITHUB_ENV"
+
+      # - name: 2. Write production files
+      #   shell: bash
+      #   run: |
+      #     set -Eeuo pipefail
+
+      #     if [ -z "${PRODUCTION_ENV_FILE:-}" ]; then
+      #       echo "Missing required GitHub secret: PRODUCTION_ENV_FILE"
+      #       exit 1
+      #     fi
+
+      #     cd "$DEPLOY_DIR"
+
+      #     printf '%s\n' "$PRODUCTION_ENV_FILE" > .env
+      #     chmod 600 .env
+
+      - name: 3. Validate compose
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd "$DEPLOY_DIR"
+
+          docker compose  config --quiet
+
+          if ! docker network inspect "$TRAEFIK_NETWORK" >/dev/null 2>&1; then
+            docker network create "$TRAEFIK_NETWORK"
+          fi
+
+      - name: 4. Build and deploy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd "$DEPLOY_DIR"
+
+          docker compose up -d --build --remove-orphans 
+
+      - name: 5. Check deployment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd "$DEPLOY_DIR"
+
+          SERVICE_ID="$(docker compose ps -q "server")"
+          if [ -z "$SERVICE_ID" ]; then
+            echo "server service did not start"
+            docker compose  ps
+            exit 1
+          fi
+
+          RUNNING="$(docker inspect --format='{{.State.Running}}' "$SERVICE_ID")"
+          if [ "$RUNNING" != "true" ]; then
+            echo "server container is not running"
+            docker compose  ps
+            docker compose logs --tail=100 "server"
+            exit 1
+          fi
+
+        
+          docker compose  ps
+          docker compose logs --tail=100 "server"
+          exit 0
+
