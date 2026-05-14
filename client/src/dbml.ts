@@ -43,6 +43,11 @@ export function validateDbml(dbml: string): string | null {
   }
 }
 
+export function parseDbmlSchemaCache(dbml: string): unknown | null {
+  const error = validateDbml(dbml);
+  return error ? null : parseDbmlToModel(dbml);
+}
+
 export type ExportFormat = 'dbml' | 'postgres' | 'mysql' | 'mariadb' | 'mssql' | 'oracle' | 'json';
 
 export function exportDbml(dbml: string, format: ExportFormat): string {

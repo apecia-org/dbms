@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react';
 import { Copy, Download, FileJson, Link2, Plus, Save, Settings, Trash2, Upload, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { deleteDocument, getSession, listDocuments, saveDocument, type Session } from './api';
+import { deleteDocument, getDocumentVersion, getSession, listDocuments, listDocumentVersions, saveDocument, type Session } from './api';
 import {
   addColumn,
   addRelationship,
@@ -28,6 +28,7 @@ import {
   importToDbml,
   type ImportFormat,
   modelToDbml,
+  parseDbmlSchemaCache,
   parseDbmlToModel,
   toggleColumnSetting,
   updateColumn,
@@ -35,7 +36,7 @@ import {
   updateTablePosition,
   validateDbml,
 } from './dbml';
-import type { DbmlColumn, DbmlDocumentModel, DbmlTable, Role, SavedDocument } from './types';
+import type { DbmlColumn, DbmlDocumentModel, DbmlTable, DocumentVersionSummary, Role, SavedDocument } from './types';
 
 type TableNodeData = {
   table: DbmlTable;
@@ -71,6 +72,8 @@ export function App() {
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<SavedDocument[]>([]);
   const [activeDocument, setActiveDocument] = useState<SavedDocument | null>(null);
+  const [versions, setVersions] = useState<DocumentVersionSummary[]>([]);
+  const [activeVersionNumber, setActiveVersionNumber] = useState<number | null>(null);
   const [documentName, setDocumentName] = useState('Untitled schema');
   const [exportOpen, setExportOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormat>('dbml');
@@ -87,7 +90,8 @@ export function App() {
   const [importPreview, setImportPreview] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-  const readonly = role === 'readonly';
+  const isHistoricalVersion = Boolean(activeDocument && activeVersionNumber && activeVersionNumber !== activeDocument.version);
+  const readonly = role === 'readonly' || isHistoricalVersion;
 
   useEffect(() => {
     getSession(authToken || undefined)
@@ -159,6 +163,7 @@ export function App() {
   );
 
   function onTextChange(value: string | undefined) {
+    if (readonly) return;
     const next = value ?? '';
     setDbml(next);
     const error = validateDbml(next);
@@ -166,8 +171,10 @@ export function App() {
     if (!error) setModel(parseDbmlToModel(next));
   }
 
-  function loadDbmlDocument(nextDbml: string, name: string, document: SavedDocument | null) {
+  function loadDbmlDocument(nextDbml: string, name: string, document: SavedDocument | null, versionNumber = document?.version ?? null) {
     setActiveDocument(document);
+    setActiveVersionNumber(versionNumber);
+    if (!document) setVersions([]);
     setDocumentName(name);
     setDbml(nextDbml);
     setParseError(validateDbml(nextDbml));
@@ -178,10 +185,12 @@ export function App() {
   }
 
   function onNodeDragStop(_: unknown, node: Node) {
+    if (readonly) return;
     applyModel(updateTablePosition(model, node.id, node.position.x, node.position.y));
   }
 
   function onNodesChange(changes: NodeChange[]) {
+    if (readonly) return;
     setVisualNodes((current) => applyNodeChanges(changes, current));
   }
 
@@ -241,18 +250,38 @@ export function App() {
 
   async function onSave() {
     if (readonly) return;
+    const note = window.prompt('Version note (optional):') ?? '';
     const saved = await saveDocument({
       id: activeDocument?.id,
       name: documentName,
       dbml,
       layoutJson: { tables: model.tables.map(({ id, x, y }) => ({ id, x, y })) },
+      parsedSchema: parseDbmlSchemaCache(dbml),
+      note,
     }, authToken || undefined);
     setActiveDocument(saved);
-    setDocuments(await listDocuments(authToken || undefined));
+    setActiveVersionNumber(saved.version);
+    const [nextDocuments, nextVersions] = await Promise.all([
+      listDocuments(authToken || undefined),
+      listDocumentVersions(saved.id, authToken || undefined),
+    ]);
+    setDocuments(nextDocuments);
+    setVersions(nextVersions);
   }
 
-  function loadDocument(document: SavedDocument) {
-    loadDbmlDocument(document.dbml, document.name, document);
+  async function loadDocument(document: SavedDocument) {
+    loadDbmlDocument(document.dbml, document.name, document, document.version);
+    setVersions(await listDocumentVersions(document.id, authToken || undefined));
+  }
+
+  async function loadVersion(versionNumber: number) {
+    if (!activeDocument) return;
+    if (versionNumber === activeDocument.version) {
+      loadDbmlDocument(activeDocument.dbml, activeDocument.name, activeDocument, activeDocument.version);
+      return;
+    }
+    const version = await getDocumentVersion(activeDocument.id, versionNumber, authToken || undefined);
+    loadDbmlDocument(version.dbml, activeDocument.name, activeDocument, version.versionNumber);
   }
 
   function startNewSchema() {
@@ -263,6 +292,8 @@ export function App() {
     if (!activeDocument || readonly) return;
     await deleteDocument(activeDocument.id, authToken || undefined);
     setActiveDocument(null);
+    setActiveVersionNumber(null);
+    setVersions([]);
     setDocuments(await listDocuments(authToken || undefined));
   }
 
@@ -351,7 +382,7 @@ export function App() {
           <FileJson size={24} />
           <div>
             <h1>DBML UI Editor</h1>
-            <span>{parseError ? 'DBML has errors' : 'DBML synced'}</span>
+            <span>{isHistoricalVersion ? `Viewing v${activeVersionNumber}` : parseError ? 'DBML has errors' : 'DBML synced'}</span>
           </div>
         </div>
         <div className="toolbar">
@@ -360,7 +391,7 @@ export function App() {
             value={activeDocument?.id ?? ''}
             onChange={(event) => {
               const document = documents.find((item) => item.id === event.target.value);
-              if (document) loadDocument(document);
+              if (document) void loadDocument(document);
             }}
             aria-label="Load schema"
           >
@@ -371,7 +402,21 @@ export function App() {
               </option>
             ))}
           </select>
-          <input value={documentName} onChange={(event) => setDocumentName(event.target.value)} aria-label="Document name" />
+          <select
+            className="schema-select"
+            value={activeVersionNumber ?? ''}
+            onChange={(event) => void loadVersion(Number(event.target.value))}
+            disabled={!activeDocument || versions.length === 0}
+            aria-label="Load version"
+          >
+            <option value="">No versions</option>
+            {versions.map((version) => (
+              <option key={version.id} value={version.versionNumber}>
+                #{version.versionNumber} {version.label}{version.note ? ` — ${version.note}` : ''}
+              </option>
+            ))}
+          </select>
+          <input value={documentName} onChange={(event) => setDocumentName(event.target.value)} disabled={readonly} aria-label="Document name" />
           <button onClick={() => applyModel(addTable(model))} disabled={readonly} title="Add table">
             <Plus size={18} />
           </button>
@@ -431,7 +476,7 @@ export function App() {
             <span>DBML Text</span>
             {parseError && <strong>{parseError}</strong>}
           </div>
-          <textarea className="dbml-textarea" spellCheck={false} value={dbml} onChange={(event) => onTextChange(event.target.value)} />
+          <textarea className="dbml-textarea" spellCheck={false} value={dbml} onChange={(event) => onTextChange(event.target.value)} readOnly={readonly} />
         </section>
 
         <section className="diagram-pane">

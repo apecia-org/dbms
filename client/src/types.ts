@@ -60,7 +60,23 @@ export type SavedDocument = {
   name: string;
   dbml: string;
   layoutJson: unknown;
+  parsedSchema?: unknown | null;
   version: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type DocumentVersionSummary = {
+  id: string;
+  documentId: string;
+  versionNumber: number;
+  label: string;
+  note?: string | null;
+  createdAt: string;
+};
+
+export type DocumentVersion = DocumentVersionSummary & {
+  dbml: string;
+  layoutJson: unknown;
+  parsedSchema?: unknown | null;
 };

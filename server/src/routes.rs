@@ -31,6 +31,11 @@ pub fn router() -> Router<AppState> {
                 .put(update_document)
                 .delete(delete_document),
         )
+        .route("/documents/{id}/versions", get(list_document_versions))
+        .route(
+            "/documents/{id}/versions/{version_number}",
+            get(get_document_version),
+        )
         .layer(middleware::from_fn_with_state((), inject_principal))
 }
 
@@ -86,6 +91,22 @@ async fn delete_document(
 ) -> Result<(), AppError> {
     require_editor(&principal)?;
     state.store.delete_document(id).await
+}
+
+async fn list_document_versions(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::db::DocumentVersionSummary>>, AppError> {
+    Ok(Json(state.store.list_document_versions(id).await?))
+}
+
+async fn get_document_version(
+    State(state): State<AppState>,
+    Path((id, version_number)): Path<(Uuid, i64)>,
+) -> Result<Json<crate::db::DocumentVersion>, AppError> {
+    Ok(Json(
+        state.store.get_document_version(id, version_number).await?,
+    ))
 }
 
 async fn inject_principal(mut request: Request, next: Next) -> Result<Response, AppError> {

@@ -1,4 +1,4 @@
-import type { SavedDocument } from './types';
+import type { DocumentVersion, DocumentVersionSummary, SavedDocument } from './types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -21,7 +21,10 @@ export async function listDocuments(token?: string): Promise<SavedDocument[]> {
   return response.json();
 }
 
-export async function saveDocument(input: { id?: string; name: string; dbml: string; layoutJson: unknown }, token?: string): Promise<SavedDocument> {
+export async function saveDocument(
+  input: { id?: string; name: string; dbml: string; layoutJson: unknown; parsedSchema?: unknown | null; note?: string | null },
+  token?: string,
+): Promise<SavedDocument> {
   const response = await fetch(input.id ? `${API_BASE}/documents/${input.id}` : `${API_BASE}/documents`, {
     method: input.id ? 'PUT' : 'POST',
     headers: { ...jsonHeaders, ...authHeaders(token) },
@@ -34,6 +37,18 @@ export async function saveDocument(input: { id?: string; name: string; dbml: str
 export async function deleteDocument(id: string, token?: string): Promise<void> {
   const response = await fetch(`${API_BASE}/documents/${id}`, { method: 'DELETE', headers: authHeaders(token) });
   if (!response.ok) throw new Error(await response.text());
+}
+
+export async function listDocumentVersions(id: string, token?: string): Promise<DocumentVersionSummary[]> {
+  const response = await fetch(`${API_BASE}/documents/${id}/versions`, { headers: authHeaders(token) });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function getDocumentVersion(id: string, versionNumber: number, token?: string): Promise<DocumentVersion> {
+  const response = await fetch(`${API_BASE}/documents/${id}/versions/${versionNumber}`, { headers: authHeaders(token) });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
 }
 
 function authHeaders(token?: string): Record<string, string> {
