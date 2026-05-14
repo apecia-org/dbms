@@ -129,11 +129,16 @@ Map your realm roles to `readonly` or `editor`. Mutating routes require `editor`
 
 ## Roadmap
 
-- [ ] Import from existing databases
-- [ ] Docs for databases
-- [ ] Diff & migration generator
-- [ ] Theme presets (light / dark / high‑contrast)
-- [ ] One‑click Docker / Fly.io deploy
+Building toward a full dbdocs.io‑class documentation tool, one phase at a time. See [`dbml-app-roadmap.md`](./dbml-app-roadmap.md) for the deep dive.
+
+| Phase | What it ships | Status |
+| ----- | ------------- | ------ |
+| **1** | **Version history & saving** — every save is a new immutable version, labelled and timestamped | ✅ Done |
+| **2** | **Wiki / documentation view** — Project / Table / column notes rendered as shareable docs (powered by `@dbml/core`) | ✅ Done |
+| 3 | Left sidebar table tree — fast navigation across schemas | ⏳ Planned |
+| 4 | Version comparison & diff — the killer feature for teams | ⏳ Planned |
+| 5 | Search — instant fuzzy search across tables, columns, notes | ⏳ Planned |
+| 6 | Public sharing & URLs — read‑only links for external stakeholders | ⏳ Planned |
 
 Got a feature in mind? [Open an issue](https://github.com/apecia-org/dbms/issues/new) — feedback shapes the roadmap.
 
